@@ -41,7 +41,7 @@ if [[ -n "$DEV_ID_HASH" ]]; then
   codesign --force --sign "$DEV_ID_HASH" "$DMG"
   echo "→ DMG signed"
 
-  KEYCHAIN_PROFILE="${APP_NAME}-notarize"
+  KEYCHAIN_PROFILE="${KEYCHAIN_PROFILE:-hermescontrol-notarize}"
   if xcrun notarytool history --keychain-profile "$KEYCHAIN_PROFILE" &>/dev/null; then
     echo "→ Submitting DMG for notarization…"
     xcrun notarytool submit "$DMG" --keychain-profile "$KEYCHAIN_PROFILE" --wait

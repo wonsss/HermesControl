@@ -47,7 +47,10 @@ struct MenuBarIcon: View {
       }
     }
     .task(id: isProcessing) {
-      guard isProcessing else { blinkOn = true; return }
+      guard isProcessing else {
+        blinkOn = true
+        return
+      }
       while !Task.isCancelled {
         try? await Task.sleep(for: .milliseconds(600))
         blinkOn.toggle()
@@ -76,7 +79,8 @@ struct MenuBarIcon: View {
   }
 
   @ViewBuilder private var badge: some View {
-    let color: Color = isProcessing
+    let color: Color =
+      isProcessing
       ? (blinkOn ? .orange : .clear)
       : isRunning ? (modelReady ? .green : .yellow) : .gray
     Circle()
@@ -267,9 +271,9 @@ struct ActivityEntry: Identifiable {
 }
 
 enum ModelAvailability: Equatable {
-  case available   // local: loaded in MLX server / cloud: gateway connected
-  case unavailable // local: server down or model not loaded / cloud: gateway off
-  case unknown     // not yet checked
+  case available  // local: loaded in MLX server / cloud: gateway connected
+  case unavailable  // local: server down or model not loaded / cloud: gateway off
+  case unknown  // not yet checked
 }
 
 struct ModelOption: Identifiable, Equatable {
@@ -590,11 +594,14 @@ final class GatewayController: ObservableObject {
       }
 
       // 2. Merge in any models the running MLX server exposes.
-      let mlxBase = hermesOptions.first(where: { $0.provider == "custom" })?.baseUrl
+      let mlxBase =
+        hermesOptions.first(where: { $0.provider == "custom" })?.baseUrl
         ?? "http://127.0.0.1:8080/v1"
       let mlxState = Self.scanMlxServer(baseUrl: mlxBase)
       // MLX server may return short IDs; match on bare name after "/" for dedup.
-      func bareName(_ id: String) -> String { String(id.split(separator: "/").last ?? Substring(id)) }
+      func bareName(_ id: String) -> String {
+        String(id.split(separator: "/").last ?? Substring(id))
+      }
       let extra = mlxState.models.filter { m in
         !hermesOptions.contains(where: {
           $0.modelId == m.modelId || bareName($0.modelId) == bareName(m.modelId)
@@ -616,7 +623,11 @@ final class GatewayController: ObservableObject {
 
       // Subscription (non-custom) models first, local (custom) models below.
       let options = (hermesOptions + extra)
-        .map { opt -> ModelOption in var m = opt; m.availability = availability(for: opt); return m }
+        .map { opt -> ModelOption in
+          var m = opt
+          m.availability = availability(for: opt)
+          return m
+        }
         .sorted { ($0.isLocal ? 1 : 0) < ($1.isLocal ? 1 : 0) }
 
       let currentOpt =
@@ -630,7 +641,7 @@ final class GatewayController: ObservableObject {
   }
 
   struct MlxServerState {
-    let models: [ModelOption]   // all known models from /v1/models
+    let models: [ModelOption]  // all known models from /v1/models
     let loadedModelId: String?  // currently loaded model, from the server's --model process arg
   }
 
@@ -646,8 +657,9 @@ final class GatewayController: ObservableObject {
     {
       models = items.compactMap { item -> ModelOption? in
         guard let modelId = item["id"] as? String, !modelId.isEmpty else { return nil }
-        return ModelOption(id: "custom:\(modelId)", modelId: modelId,
-                           provider: "custom", baseUrl: baseUrl)
+        return ModelOption(
+          id: "custom:\(modelId)", modelId: modelId,
+          provider: "custom", baseUrl: baseUrl)
       }
     }
 
@@ -742,7 +754,9 @@ final class GatewayController: ObservableObject {
       await MainActor.run {
         if let (fileSize, text) = result {
           self.logOffset = fileSize
-          text.components(separatedBy: "\n").forEach { self.parseLine($0) }
+          for line in text.components(separatedBy: "\n") {
+            self.parseLine(line)
+          }
         }
         self.isPolling = false
       }
@@ -1419,9 +1433,10 @@ struct ContentView: View {
         Image(systemName: "bell")
       }
       .controlSize(.small)
-      .help(NotificationManager.notificationDenied
-        ? "Notifications blocked — open System Settings"
-        : "Enable notifications / send a test")
+      .help(
+        NotificationManager.notificationDenied
+          ? "Notifications blocked — open System Settings"
+          : "Enable notifications / send a test")
       Button("Quit") { NSApp.terminate(nil) }
         .controlSize(.small).foregroundStyle(.secondary)
     }

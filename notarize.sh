@@ -7,7 +7,7 @@ cd "$(dirname "$0")"
 
 APP_NAME="HermesControl"
 APP="${APP_NAME}.app"
-KEYCHAIN_PROFILE="${APP_NAME}-notarize"
+KEYCHAIN_PROFILE="${KEYCHAIN_PROFILE:-hermescontrol-notarize}"
 # Team ID auto-detected from the cert name's (XXXXXXXXXX). Override: TEAM_ID=XXXX ./notarize.sh
 TEAM_ID="${TEAM_ID:-$(security find-identity -v -p codesigning 2>/dev/null \
   | grep 'Developer ID Application' | head -1 | grep -oE '\([A-Z0-9]{10}\)' | tr -d '()')}"

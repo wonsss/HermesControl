@@ -34,15 +34,18 @@ final class HelpersTests: XCTestCase {
   }
 
   func testEmptyBaseURLAllowed() {
-    let codex = ModelOption(id: "openai-codex:gpt-5.5", modelId: "gpt-5.5", provider: "openai-codex", baseUrl: "")
+    let codex = ModelOption(
+      id: "openai-codex:gpt-5.5", modelId: "gpt-5.5", provider: "openai-codex", baseUrl: "")
     XCTAssertTrue(codex.isValid)
   }
 
   func testInjectionAttemptsRejected() {
     // Quote/space/path-traversal payloads that would break the config write must be refused.
-    let quoteInModel = ModelOption(id: "x", modelId: "gpt'; import os", provider: "custom", baseUrl: "")
+    let quoteInModel = ModelOption(
+      id: "x", modelId: "gpt'; import os", provider: "custom", baseUrl: "")
     let spaceInProvider = ModelOption(id: "x", modelId: "gpt", provider: "a b", baseUrl: "")
-    let badURL = ModelOption(id: "x", modelId: "gpt", provider: "custom", baseUrl: "http://x'$(rm -rf)")
+    let badURL = ModelOption(
+      id: "x", modelId: "gpt", provider: "custom", baseUrl: "http://x'$(rm -rf)")
     XCTAssertFalse(quoteInModel.isValid)
     XCTAssertFalse(spaceInProvider.isValid)
     XCTAssertFalse(badURL.isValid)
