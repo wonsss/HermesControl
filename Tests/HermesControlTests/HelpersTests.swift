@@ -51,6 +51,23 @@ final class HelpersTests: XCTestCase {
     XCTAssertFalse(badURL.isValid)
   }
 
+  // MARK: ActivityEntry.cancelled() — force-cancelled sessions are shown in recent activity
+
+  func testCancelledActivityEntryMarksResponseTime() {
+    let entry = ActivityEntry(
+      platform: "telegram",
+      user: "Marco",
+      message: "stop this",
+      model: "gpt-5.5",
+      startedAt: Date(timeIntervalSince1970: 1_000))
+
+    let cancelled = entry.cancelled()
+
+    XCTAssertEqual(cancelled.platform, entry.platform)
+    XCTAssertEqual(cancelled.message, entry.message)
+    XCTAssertEqual(cancelled.responseTime, "cancelled")
+  }
+
   // MARK: findExecutable() — tool discovery used for the hermes CLI
 
   func testFindExecutableLocatesKnownBinary() {

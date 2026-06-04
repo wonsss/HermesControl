@@ -268,6 +268,14 @@ struct ActivityEntry: Identifiable {
   var outputTokens: Int?
   var reasoningTokens: Int?
   var costUsd: Double?
+
+  var isCancelled: Bool { responseTime == "cancelled" }
+
+  func cancelled() -> ActivityEntry {
+    var copy = self
+    copy.responseTime = "cancelled"
+    return copy
+  }
 }
 
 enum ModelAvailability: Equatable {
@@ -537,6 +545,31 @@ final class GatewayController: ObservableObject {
       if wasRunning {
         _ = sh(kHermes, ["gateway", "stop"])
       } else {
+        _ = sh(kHermes, ["gateway", "start"])
+        _ = sh(kPlistBuddy, ["-c", "Set :RunAtLoad false", kPlistPath])
+      }
+      await MainActor.run { [weak self] in
+        self?.refresh()
+        self?.busy = false
+      }
+    }
+  }
+
+  func forceCancelCurrentSession() {
+    guard isProcessing, let req = currentRequest, !busy else { return }
+    let wasRunning = isRunning
+    busy = true
+    currentRequest = nil
+    isProcessing = false
+    elapsed = ""
+    ThinkingContent.shared.isLive = false
+    recentActivity.insert(req.cancelled(), at: 0)
+    if recentActivity.count > 10 { recentActivity.removeLast() }
+
+    Task.detached(priority: .userInitiated) { [weak self] in
+      if wasRunning {
+        _ = sh(kHermes, ["gateway", "stop"])
+        try? await Task.sleep(for: .seconds(1))
         _ = sh(kHermes, ["gateway", "start"])
         _ = sh(kPlistBuddy, ["-c", "Set :RunAtLoad false", kPlistPath])
       }
@@ -1016,6 +1049,16 @@ struct ThinkingView: View {
       Text(content.isLive ? "Live · \(content.title)" : content.title)
         .font(.system(size: 12, weight: .medium))
       Spacer()
+      if content.isLive {
+        Button {
+          GatewayController.shared?.forceCancelCurrentSession()
+        } label: {
+          Image(systemName: "xmark.octagon.fill")
+        }
+        .buttonStyle(.borderless)
+        .foregroundStyle(.red)
+        .help("Force cancel session")
+      }
       if let i = content.inputTokens, let o = content.outputTokens {
         Text(
           "↑\(i) ↓\(o)\(content.reasoningTokens.map { " 🧠\($0)" } ?? "")\(content.costUsd.map { String(format: "  $%.4f", $0) } ?? "")"
@@ -1293,45 +1336,52 @@ struct ContentView: View {
   // MARK: Processing row (clickable → thinking window)
 
   func processingRow(_ req: ActivityEntry) -> some View {
-    Button {
-      ctrl.showThinking(for: req)
-    } label: {
-      VStack(alignment: .leading, spacing: 5) {
-        HStack(spacing: 6) {
-          Text(ctrl.platformName(req.platform))
-            .font(.system(size: 11, weight: .semibold))
-            .padding(.horizontal, 7).padding(.vertical, 2)
-            .background(Color.orange.opacity(0.15))
-            .clipShape(Capsule())
-          if !req.user.isEmpty {
-            Text(req.user).font(.system(size: 11)).foregroundStyle(.secondary)
-          }
-          Spacer()
-          Text(ctrl.elapsed)
-            .font(.system(size: 11, design: .monospaced))
-            .foregroundStyle(.secondary)
+    VStack(alignment: .leading, spacing: 5) {
+      HStack(spacing: 6) {
+        Text(ctrl.platformName(req.platform))
+          .font(.system(size: 11, weight: .semibold))
+          .padding(.horizontal, 7).padding(.vertical, 2)
+          .background(Color.orange.opacity(0.15))
+          .clipShape(Capsule())
+        if !req.user.isEmpty {
+          Text(req.user).font(.system(size: 11)).foregroundStyle(.secondary)
         }
-        if !req.message.isEmpty {
-          Text(req.message).font(.system(size: 12)).lineLimit(2)
+        Spacer()
+        Text(ctrl.elapsed)
+          .font(.system(size: 11, design: .monospaced))
+          .foregroundStyle(.secondary)
+        Button {
+          ctrl.forceCancelCurrentSession()
+        } label: {
+          Image(systemName: "xmark.octagon.fill")
         }
-        HStack(spacing: 4) {
-          if !req.model.isEmpty {
-            Text(ctrl.modelDisplayNameFromId(req.model))
-              .font(.system(size: 10)).foregroundStyle(.tertiary)
-          }
-          Spacer()
-          Image(systemName: "brain")
-            .font(.system(size: 10))
-            .foregroundStyle(.secondary)
-          Text("View Thinking")
-            .font(.system(size: 10))
-            .foregroundStyle(.secondary)
-        }
+        .buttonStyle(.borderless)
+        .foregroundStyle(.red)
+        .disabled(ctrl.busy)
+        .help("Force cancel session")
       }
-      .padding(.horizontal, 14).padding(.vertical, 10)
-      .contentShape(Rectangle())
+      if !req.message.isEmpty {
+        Text(req.message).font(.system(size: 12)).lineLimit(2)
+      }
+      HStack(spacing: 4) {
+        if !req.model.isEmpty {
+          Text(ctrl.modelDisplayNameFromId(req.model))
+            .font(.system(size: 10)).foregroundStyle(.tertiary)
+        }
+        Spacer()
+        Image(systemName: "brain")
+          .font(.system(size: 10))
+          .foregroundStyle(.secondary)
+        Text("View Thinking")
+          .font(.system(size: 10))
+          .foregroundStyle(.secondary)
+      }
     }
-    .buttonStyle(.plain)
+    .padding(.horizontal, 14).padding(.vertical, 10)
+    .contentShape(Rectangle())
+    .onTapGesture {
+      ctrl.showThinking(for: req)
+    }
   }
 
   // MARK: Recent section
@@ -1355,7 +1405,10 @@ struct ContentView: View {
       ctrl.showThinking(for: entry)
     } label: {
       HStack(alignment: .top, spacing: 8) {
-        Text("✓").font(.system(size: 11)).foregroundStyle(.green).padding(.top, 1)
+        Image(systemName: entry.isCancelled ? "xmark.circle.fill" : "checkmark")
+          .font(.system(size: 11))
+          .foregroundStyle(entry.isCancelled ? .red : .green)
+          .padding(.top, 1)
         VStack(alignment: .leading, spacing: 2) {
           HStack(spacing: 4) {
             Text(ctrl.platformName(entry.platform))
@@ -1366,7 +1419,9 @@ struct ContentView: View {
             }
             if let rt = entry.responseTime {
               Text("·").foregroundStyle(.tertiary)
-              Text(rt).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
+              Text(rt)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(entry.isCancelled ? .red : .secondary)
             }
           }
           if !entry.message.isEmpty {
