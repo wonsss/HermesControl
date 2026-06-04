@@ -1,0 +1,7 @@
+.build/
+*.app/
+*.icns
+*.iconset/
+*.zip
+.DS_Store
+/tmp/
