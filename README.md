@@ -1,61 +1,83 @@
-# HermesControl
+# Hermes Control
 
-A macOS menu bar companion for [Hermes Agent](https://hermes-agent.nousresearch.com) — toggle the
-messaging gateway on/off, watch incoming requests in real time, follow the model's reasoning, and
-switch models, all from the menu bar.
+**English** | [한국어](README.ko.md)
 
-![build](https://github.com/wonsss/HermesControl/actions/workflows/build.yml/badge.svg)
+A native macOS menu bar app for [Hermes Agent](https://hermes-agent.nousresearch.com) that lets you control the Hermes messaging gateway, inspect live requests, follow the model's reasoning, and switch models without touching the terminal.
 
-![HermesControl](docs/screenshot.png)
+[![build](https://github.com/wonsss/HermesControl/actions/workflows/build.yml/badge.svg)](https://github.com/wonsss/HermesControl/actions/workflows/build.yml)
+![macOS 14+](https://img.shields.io/badge/macOS-14%2B-blue)
+![Hermes Agent](https://img.shields.io/badge/Hermes-Agent-required-orange)
+![Swift 6](https://img.shields.io/badge/Swift-6-red)
+![License: MIT](https://img.shields.io/badge/License-MIT-green)
 
-## Why
+## Table of Contents
 
-When Hermes' gateway is running, your Mac answers Telegram/Discord/Slack messages whenever it's
-awake. HermesControl gives you an explicit switch for that, plus visibility into what the agent is
-doing right now:
+- [Features](#features)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Usage](#usage)
+- [How It Works](#how-it-works)
+- [Notarization](#notarization)
+- [Security](#security)
+- [License](#license)
 
-- **Gateway toggle** — turn the gateway ON/OFF from the menu bar. OFF stays off across logins
-  (it patches the launch agent's `RunAtLoad`), so an awake Mac is no longer always-connected.
-- **Live activity** — see the current inbound request (platform, sender, message, elapsed time) and
-  a list of recent ones.
-- **Thinking window** — click a request to open per-turn reasoning, plus a Conversation tab showing
-  the user/assistant messages. Both update live while a request is processing.
-- **Token & cost** — per-session input / output / reasoning tokens and estimated cost.
-- **Model switcher** — switch between the models defined in your Hermes config; the gateway restarts
-  automatically.
-- **Notifications** — get a macOS notification when a request arrives; click it to open the Thinking
-  window.
+## Features
+
+- **Gateway control** — Turn the Hermes messaging gateway on or off from the menu bar
+- **Persistent disconnect** — OFF stays OFF across logins by patching Hermes' launch agent `RunAtLoad`
+- **Live request tracking** — See the current inbound request with platform, sender, message, and elapsed time
+- **Thinking window** — Open a live reasoning view plus the user/assistant conversation for the active request
+- **Recent activity** — Review the latest completed or cancelled sessions directly from the popover
+- **Force cancel** — Interrupt the current Hermes session from the popover or the live Thinking window
+- **Token and cost view** — Inspect input, output, reasoning tokens, and estimated session cost
+- **Model switching** — Switch between models defined in Hermes config; the gateway restarts automatically
+- **Notifications** — Get a macOS notification when a new request arrives
+- **Move to /Applications** — Prompts on first launch if the app is running from another folder
 
 ## Requirements
 
-- macOS 14 (Sonoma) or later.
-- [Hermes Agent](https://hermes-agent.nousresearch.com) installed (`~/.hermes`). HermesControl reads
-  Hermes' state DB and config and drives the `hermes` CLI — it does nothing useful without it.
-  A non-default Hermes home is honored via the `HERMES_HOME` environment variable.
+| Requirement | Detail |
+|---|---|
+| macOS | 14.0 (Sonoma) or later |
+| Hermes Agent | Installed and configured locally |
+| Hermes home | Default `~/.hermes`, or custom location via `HERMES_HOME` |
+| Hermes CLI | `hermes` must be available from PATH or Hermes' standard install location |
 
-## Install
+Hermes Control reads Hermes' local state database and config, and controls the Hermes gateway process. Without Hermes Agent installed, the app has nothing to manage.
 
-### Download (recommended)
+## Installation
 
-Grab the notarized `HermesControl-notarized.zip` from
-[Releases](https://github.com/wonsss/HermesControl/releases), unzip, and move `HermesControl.app`
-to `/Applications`. On first launch the app offers to install itself there.
+### Option A — Download the notarized app (recommended)
 
-### Build from source
+1. Open [Releases](https://github.com/wonsss/HermesControl/releases)
+2. Download the latest `HermesControl-x.y.z.dmg`
+3. Open the DMG and drag `HermesControl.app` to `/Applications`
+4. Launch `HermesControl.app`
+
+You can also download `HermesControl-notarized.zip` from the same release page if you prefer a ZIP artifact.
+
+### Option B — Build from source
 
 ```bash
 git clone https://github.com/wonsss/HermesControl.git
 cd HermesControl
-./build.sh                       # builds HermesControl.app (signs if a Developer ID cert exists)
+./build.sh
 open HermesControl.app
 ```
 
-Requires the Swift toolchain (Xcode or Command Line Tools).
+If you want the built app in `/Applications`, launch it once and accept the move/install prompt.
+
+Requires Xcode Command Line Tools:
+
+```bash
+xcode-select --install
+```
 
 ### Gatekeeper
 
-If you build/sign locally without notarization, macOS may block first launch. Either right-click the
-app → **Open**, or clear the quarantine flag:
+The GitHub Release DMG is notarized and should open normally.
+
+If you build locally and macOS blocks first launch, either right-click the app and choose **Open**, or clear the quarantine flag:
 
 ```bash
 xattr -dr com.apple.quarantine HermesControl.app
@@ -63,28 +85,39 @@ xattr -dr com.apple.quarantine HermesControl.app
 
 ## Usage
 
-The app lives in the menu bar (no Dock icon). The label shows `ON`/`OFF`, or a spinner + platform
-code while a request is being processed.
+1. Install and configure [Hermes Agent](https://hermes-agent.nousresearch.com)
+2. Launch `HermesControl.app`
+3. Click the menu bar item to open the status popover
+4. Use **Connect** / **Disconnect** to control the Hermes gateway
+5. Click an active or recent request to open the Thinking window
+6. Use the force-cancel button if you need to stop the active session
+7. Change models from the built-in model list when needed
 
-- Click the icon for the status popover: gateway toggle, recent activity, model switcher.
-- Click a request row to open the **Thinking** window (reasoning + conversation, live).
-- The 🔔 button requests notification permission / sends a test.
+## How It Works
 
-## Development
+- Hermes Control monitors Hermes' local gateway log and state database
+- It reads model options from Hermes config and displays the currently active model
+- It queries session metadata from Hermes' SQLite state database to show reasoning, conversation, token usage, and cost
+- It restarts the Hermes gateway when model changes or forced cancellation require it
+
+## Notarization
+
+For maintainers with an Apple Developer Program membership and a valid `Developer ID Application` certificate:
 
 ```bash
-swift build       # debug build
-swift test        # run the unit tests
-swift format -i -r Sources/
+./notarize.sh --store-credentials
+./notarize.sh
 ```
 
-## Notarization (maintainers)
+This builds the app, signs it, submits it to Apple notarization, staples the ticket, and produces `HermesControl-notarized.zip` for GitHub Releases.
 
-```bash
-./notarize.sh --store-credentials   # one-time: Apple ID + app-specific password
-./notarize.sh                       # build, submit, staple → HermesControl-notarized.zip
-```
+## Security
+
+- **No shell string interpolation for untrusted input** — subprocesses use explicit argument arrays
+- **Model/config validation** — model ID, provider, and base URL are validated before config writes
+- **Tool discovery** — Hermes binaries are discovered via PATH and common install locations, not hardcoded user paths
+- **Local-only control plane** — the app reads Hermes state locally and does not add its own external network service
 
 ## License
 
-[MIT](LICENSE)
+MIT — see [LICENSE](LICENSE)
