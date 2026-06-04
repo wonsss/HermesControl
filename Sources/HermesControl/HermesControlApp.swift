@@ -17,8 +17,7 @@ struct HermesControlApp: App {
       MenuBarIcon(
         isProcessing: ctrl.isProcessing,
         isRunning: ctrl.isRunning,
-        modelReady: ctrl.currentModel.availability == .available,
-        blinkOn: ctrl.blinkOn
+        modelReady: ctrl.currentModel.availability == .available
       )
     }
     .menuBarExtraStyle(.window)
@@ -35,15 +34,24 @@ struct MenuBarIcon: View {
   let isProcessing: Bool
   let isRunning: Bool
   let modelReady: Bool
-  let blinkOn: Bool
+  @State private var blinkOn = true
 
   @Environment(\.colorScheme) private var colorScheme
 
   var body: some View {
-    if let image = rendered() {
-      Image(nsImage: image).renderingMode(.original)
-    } else {
-      Text("H").font(.system(size: 11, weight: .bold))
+    Group {
+      if let image = rendered() {
+        Image(nsImage: image).renderingMode(.original)
+      } else {
+        Text("H").font(.system(size: 11, weight: .bold))
+      }
+    }
+    .task(id: isProcessing) {
+      guard isProcessing else { blinkOn = true; return }
+      while !Task.isCancelled {
+        try? await Task.sleep(for: .milliseconds(600))
+        blinkOn.toggle()
+      }
     }
   }
 
@@ -219,7 +227,9 @@ enum MoveToApplications {
       if fm.fileExists(atPath: dest) { try fm.removeItem(atPath: dest) }
       try fm.copyItem(atPath: src, toPath: dest)
     } catch {
-      // Escape single quotes for the POSIX shell inside AppleScript's `do shell script`.
+      // Both `src` (Bundle.main.bundlePath) and `dest` ("/Applications/<name>") are
+      // process-controlled values. shq() applies POSIX single-quote escaping so no
+      // shell metacharacter in the path can break out of the quoted argument.
       func shq(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
       let script =
         "do shell script \"rm -rf \(shq(dest)) && cp -R \(shq(src)) /Applications/\" with administrator privileges"
@@ -277,7 +287,7 @@ struct ModelOption: Identifiable, Equatable {
     let provOK = provider.range(of: #"^[A-Za-z0-9._\-]*$"#, options: .regularExpression) != nil
     let urlOK =
       baseUrl.isEmpty
-      || baseUrl.range(of: #"^[A-Za-z0-9._:/\-]+$"#, options: .regularExpression) != nil
+      || baseUrl.range(of: #"^https?://[A-Za-z0-9._:/\-]+$"#, options: .regularExpression) != nil
     return idOK && provOK && urlOK
   }
 }
@@ -351,8 +361,16 @@ func sh(_ path: String, _ args: [String]) -> String {
 }
 
 func extract(_ pattern: String, from text: String) -> String? {
-  guard let re = try? NSRegularExpression(pattern: pattern),
-    let m = re.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+  enum Cache { static let store = NSCache<NSString, NSRegularExpression>() }
+  let re: NSRegularExpression
+  if let cached = Cache.store.object(forKey: pattern as NSString) {
+    re = cached
+  } else {
+    guard let compiled = try? NSRegularExpression(pattern: pattern) else { return nil }
+    Cache.store.setObject(compiled, forKey: pattern as NSString)
+    re = compiled
+  }
+  guard let m = re.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
     m.numberOfRanges > 1,
     let r = Range(m.range(at: 1), in: text)
   else { return nil }
@@ -414,11 +432,11 @@ final class GatewayController: ObservableObject {
   static weak var shared: GatewayController?
   @Published var isRunning = false
   @Published var busy = false
+  var isPopoverVisible = false
   @Published var isProcessing = false
   @Published var currentRequest: ActivityEntry? = nil
   @Published var recentActivity: [ActivityEntry] = []
   @Published var spinnerFrame = kSpinner[0]
-  @Published var blinkOn = true
   @Published var elapsed = ""
   @Published var currentModel = ModelOption(id: "", modelId: "", provider: "", baseUrl: "")
   @Published var modelOptions: [ModelOption] = []
@@ -442,7 +460,9 @@ final class GatewayController: ObservableObject {
       while true {
         try? await Task.sleep(for: .seconds(5))
         self?.refresh()
-        self?.loadModelOptions()
+        // Skip the expensive model scan (Python + curl + ps) when the popover is hidden.
+        // loadModelOptions() is also triggered on onAppear, so the list is fresh when opened.
+        if self?.isPopoverVisible ?? false { self?.loadModelOptions() }
       }
     }
     Task { @MainActor [weak self] in
@@ -635,13 +655,17 @@ final class GatewayController: ObservableObject {
     // running mlx_lm.server (or mlx-lm) process args. This is read-only — it observes
     // the server without triggering inference or forcing a model to load.
     var loadedId: String? = nil
-    let psOut = sh("/bin/ps", ["aux"])
-    for line in psOut.components(separatedBy: "\n") {
-      guard line.contains("mlx_lm") || line.contains("mlx-lm") else { continue }
-      guard let r = line.range(of: "--model ") else { continue }
-      let tail = String(line[r.upperBound...])
-      let modelId = tail.components(separatedBy: " ").first ?? ""
-      if !modelId.isEmpty { loadedId = modelId; break }
+    // Use pgrep to find the PID first, then fetch only that process's command line —
+    // much lighter than scanning the entire ps aux output.
+    let pidStr = sh("/usr/bin/pgrep", ["-f", "mlx_lm"])
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    if let pid = pidStr.components(separatedBy: "\n").first(where: { !$0.isEmpty }) {
+      let cmdLine = sh("/bin/ps", ["-p", pid, "-o", "command="])
+      if let r = cmdLine.range(of: "--model ") {
+        let tail = String(cmdLine[r.upperBound...])
+        let modelId = tail.components(separatedBy: " ").first ?? ""
+        if !modelId.isEmpty { loadedId = modelId }
+      }
     }
 
     return MlxServerState(models: models, loadedModelId: loadedId)
@@ -685,8 +709,6 @@ final class GatewayController: ObservableObject {
     guard isProcessing else { return }
     spinnerIdx = (spinnerIdx + 1) % kSpinner.count
     spinnerFrame = kSpinner[spinnerIdx]
-    // Blink the menu bar dot: toggle every 4 ticks = ~600ms on / 600ms off
-    if spinnerIdx % 4 == 0 { blinkOn.toggle() }
     if let req = currentRequest {
       let s = Int(Date().timeIntervalSince(req.startedAt))
       elapsed = s < 60 ? "\(s)s" : "\(s / 60)m \(s % 60)s"
@@ -727,14 +749,17 @@ final class GatewayController: ObservableObject {
     }
   }
 
-  private func logTimestamp(from line: String) -> Date {
-    // "2026-06-04 00:12:18,696 INFO ..."
-    let pattern = #"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})"#
-    guard let r = line.range(of: pattern, options: .regularExpression) else { return Date() }
+  private static let logDateFormatter: DateFormatter = {
     let fmt = DateFormatter()
     fmt.dateFormat = "yyyy-MM-dd HH:mm:ss"
     fmt.locale = Locale(identifier: "en_US_POSIX")
-    return fmt.date(from: String(line[r])) ?? Date()
+    return fmt
+  }()
+
+  private func logTimestamp(from line: String) -> Date {
+    let pattern = #"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})"#
+    guard let r = line.range(of: pattern, options: .regularExpression) else { return Date() }
+    return GatewayController.logDateFormatter.date(from: String(line[r])) ?? Date()
   }
 
   nonisolated func notify(_ title: String, _ subtitle: String, _ body: String) {
@@ -841,6 +866,10 @@ final class GatewayController: ObservableObject {
       ])
     let sid = sidOut.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !sid.isEmpty else { return nil }
+    // Validate before interpolating: Hermes session IDs are UUIDs or short alphanumeric strings.
+    guard sid.range(of: #"^[A-Fa-f0-9\-]{1,64}$"#, options: .regularExpression) != nil else {
+      return nil
+    }
     let out = sh(
       kSqlite3,
       [
@@ -1177,6 +1206,11 @@ struct ContentView: View {
       footer
     }
     .frame(width: 310)
+    .onAppear {
+      ctrl.isPopoverVisible = true
+      ctrl.loadModelOptions()
+    }
+    .onDisappear { ctrl.isPopoverVisible = false }
   }
 
   // MARK: Status header
